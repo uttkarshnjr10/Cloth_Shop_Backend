@@ -1,0 +1,1 @@
+export const DB_NAME = "anupriya_fashion_hub";
