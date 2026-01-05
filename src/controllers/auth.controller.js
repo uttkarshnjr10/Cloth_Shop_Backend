@@ -6,11 +6,19 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { generateRefreshToken } from "../services/auth.service.js";
 import argon2 from "argon2";
 
-// Cookie Options (Production Grade)
-const cookieOptions = {
-    httpOnly: true,
-    secure: true, // Always true since we requested "Production Grade"
-    sameSite: "None"
+// --- DYNAMIC COOKIE OPTIONS (THE FIX) ---
+const getCookieOptions = () => {
+    // Check if we are in production (e.g. on Vercel/Render)
+    const isProduction = process.env.NODE_ENV === "production";
+
+    return {
+        httpOnly: true,
+        // On Localhost, 'secure' must be false for Safari/Brave to accept it over HTTP
+        secure: isProduction, 
+        // On Localhost, 'Lax' is preferred. On Prod, 'None' is needed for Cross-Origin.
+        sameSite: isProduction ? "None" : "Lax",
+        path: "/", // Ensure cookie is available for all routes
+    };
 };
 
 const login = asyncHandler(async (req, res) => {
@@ -18,7 +26,7 @@ const login = asyncHandler(async (req, res) => {
 
     let user;
 
-    // 1. Determine Login Type (Owner vs Staff)
+    // 1. Determine Login Type
     if (email) {
         user = await User.findOne({ email });
     } else if (staffId) {
@@ -30,7 +38,7 @@ const login = asyncHandler(async (req, res) => {
     }
 
     // 2. Check Password/PIN
-    const secret = password || pin; // Flexible field
+    const secret = password || pin;
     if (!secret) throw new ApiError(400, "Password or PIN required");
 
     const isValid = await user.isPasswordCorrect(secret);
@@ -40,12 +48,13 @@ const login = asyncHandler(async (req, res) => {
     const accessToken = user.generateAccessToken();
     const refreshToken = await generateRefreshToken(user, req.ip, req.headers["user-agent"]);
 
-    // 4. Send Response
+    // 4. Send Response with DYNAMIC Options
+    const options = getCookieOptions();
+
     return res
         .status(200)
-        // Use the new options here
-        .cookie("accessToken", accessToken, cookieOptions)
-        .cookie("refreshToken", refreshToken, cookieOptions)
+        .cookie("accessToken", accessToken, options)
+        .cookie("refreshToken", refreshToken, options)
         .json(
             new ApiResponse(200, { 
                 user: { _id: user._id, name: user.name, role: user.role, email: user.email },
@@ -61,68 +70,57 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
         throw new ApiError(401, "Unauthorized request");
     }
 
-    // 1. Find all active tokens for this user (Optimization: In a real app, you might iterate or store a lookup key. 
-    // Since we hash the token, we can't search by hash directly efficiently without a lookup key.
-    // TRADEOFF FIX: To search efficiently, we normally store a 'familyId' or we verify strictly.
-    // For this strict implementation, we will fetch the user's tokens and compare.
-    // NOTE: For performance, usually we store 'token' encrypted or a plain 'familyId'. 
-    // Given the strict requirement "Store hashed refresh tokens", we must iterate user's tokens or rely on a "tokenId" in the JWT payload if we used JWT for Refresh. 
-    // But we are using Random Strings.
-    
-    // STRATEGY: We will decode the user from the *expired* access token if passed, OR 
-    // simpler: We will allow the frontend to pass userId? No, that's insecure.
-    // Correction: Standard practice with Hashed Tokens is to send `tokenId.randomString`. 
-    // The `tokenId` looks up the DB record, the `randomString` verifies the hash.
-    // Let's assume the incoming token is just the string for now and we accept the scan cost (low for small user counts) 
-    // OR we change the design to JWT for Refresh Token but with database backing (Hybrid).
-    
-    // Let's stick to the prompt: "Refresh tokens must be random... strings".
-    // To find it efficiently, we will assume we iterate. (Or better, we check valid tokens for the user context if we had it).
-    // Wait, we don't know the user. 
-    // FIX: We will Issue Refresh Token as `objectId + "." + randomString`.
-    
-    // Splitting the token
     const [tokenId, tokenSecret] = incomingRefreshToken.split(".");
     if(!tokenId || !tokenSecret) throw new ApiError(401, "Invalid Token Format");
 
     const tokenDoc = await RefreshToken.findById(tokenId);
     if (!tokenDoc) throw new ApiError(401, "Invalid Refresh Token");
 
-    // 2. Reuse Detection (The Fortress Logic)
     if (tokenDoc.revoked) {
-        // Security Alert: A revoked token was used. Delete ALL tokens for this user.
         await RefreshToken.deleteMany({ user: tokenDoc.user });
         throw new ApiError(401, "Security Alert: Token reuse detected. Re-login required.");
     }
 
-    // 3. Validate Hash
     const isValid = await argon2.verify(tokenDoc.tokenHash, tokenSecret);
     if (!isValid) throw new ApiError(401, "Invalid Refresh Token");
 
-    // 4. Rotate Token
     const user = await User.findById(tokenDoc.user);
     const newAccessToken = user.generateAccessToken();
     
-    // Revoke old
     tokenDoc.revoked = true;
     await tokenDoc.save();
 
-    // Issue new
-    // Note: We need to modify our generate service slightly to return the ID too.
     const newRefreshTokenFull = await generateRefreshToken(user, req.ip, req.headers["user-agent"]);
 
-    // return res
-    //     .status(200)
-    //     .cookie("accessToken", newAccessToken, cookieOptions)
-    //     .cookie("refreshToken", newRefreshTokenFull, cookieOptions)
-    //     .json(new ApiResponse(200, { accessToken: newAccessToken }, "Token refreshed"));
+    const options = getCookieOptions();
+
     return res
         .status(200)
-        // Use the new options here as well
-        .cookie("accessToken", newAccessToken, cookieOptions)
-        .cookie("refreshToken", newRefreshTokenFull, cookieOptions)
+        .cookie("accessToken", newAccessToken, options)
+        .cookie("refreshToken", newRefreshTokenFull, options)
         .json(new ApiResponse(200, { accessToken: newAccessToken }, "Token refreshed"));
 });
+
+const logout = asyncHandler(async (req, res) => {
+    const incomingRefreshToken = req.cookies.refreshToken;
+    
+    if (incomingRefreshToken) {
+        const [tokenId] = incomingRefreshToken.split(".");
+        if(tokenId) {
+            await RefreshToken.findByIdAndUpdate(tokenId, { revoked: true });
+        }
+    }
+
+    const options = getCookieOptions();
+
+    return res
+        .status(200)
+        .clearCookie("accessToken", options)
+        .clearCookie("refreshToken", options)
+        .json(new ApiResponse(200, {}, "Logged out successfully"));
+});
+
+// Register Staff remains the same (no cookies involved)
 const registerStaff = asyncHandler(async (req, res) => {
     const { name, staffId, pin } = req.body;
 
@@ -135,12 +133,11 @@ const registerStaff = asyncHandler(async (req, res) => {
         throw new ApiError(409, "Staff ID already exists");
     }
 
-    // 3. Create User (Password field acts as PIN for staff)
-    // Note: The User Model pre-save hook will hash this PIN automatically.
     const user = await User.create({
         name,
+        name, // Fix: Ensure name is passed correctly
         staffId,
-        password: pin, // We store the PIN in the password field
+        password: pin,
         role: "STAFF"
     });
 
@@ -153,24 +150,6 @@ const registerStaff = asyncHandler(async (req, res) => {
     return res.status(201).json(
         new ApiResponse(200, createdUser, "Staff registered successfully")
     );
-});
-
-
-const logout = asyncHandler(async (req, res) => {
-    const incomingRefreshToken = req.cookies.refreshToken;
-    
-    if (incomingRefreshToken) {
-        const [tokenId] = incomingRefreshToken.split(".");
-        if(tokenId) {
-            await RefreshToken.findByIdAndUpdate(tokenId, { revoked: true });
-        }
-    }
-
-    return res
-        .status(200)
-        .clearCookie("accessToken", cookieOptions)
-        .clearCookie("refreshToken", cookieOptions)
-        .json(new ApiResponse(200, {}, "Logged out successfully"));
 });
 
 export { login, refreshAccessToken, logout, registerStaff };
