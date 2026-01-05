@@ -15,6 +15,9 @@ import dashboardRouter from "./routes/dashboard.routes.js";
 
 const app = express();
 
+// It tells Express: "We are behind a proxy (like Render/Vercel), trust their headers"
+app.set("trust proxy", 1);
+
 // Security Middleware
 app.use(helmet());
 
