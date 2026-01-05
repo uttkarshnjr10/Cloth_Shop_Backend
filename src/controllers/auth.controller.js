@@ -10,7 +10,7 @@ import argon2 from "argon2";
 const cookieOptions = {
     httpOnly: true,
     secure: true, // Always true since we requested "Production Grade"
-    sameSite: "Strict"
+    sameSite: "None"
 };
 
 const login = asyncHandler(async (req, res) => {
@@ -43,11 +43,12 @@ const login = asyncHandler(async (req, res) => {
     // 4. Send Response
     return res
         .status(200)
+        // Use the new options here
         .cookie("accessToken", accessToken, cookieOptions)
         .cookie("refreshToken", refreshToken, cookieOptions)
         .json(
             new ApiResponse(200, { 
-                user: { _id: user._id, name: user.name, role: user.role },
+                user: { _id: user._id, name: user.name, role: user.role, email: user.email },
                 accessToken 
             }, "Login successful")
         );
@@ -110,8 +111,14 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
     // Note: We need to modify our generate service slightly to return the ID too.
     const newRefreshTokenFull = await generateRefreshToken(user, req.ip, req.headers["user-agent"]);
 
+    // return res
+    //     .status(200)
+    //     .cookie("accessToken", newAccessToken, cookieOptions)
+    //     .cookie("refreshToken", newRefreshTokenFull, cookieOptions)
+    //     .json(new ApiResponse(200, { accessToken: newAccessToken }, "Token refreshed"));
     return res
         .status(200)
+        // Use the new options here as well
         .cookie("accessToken", newAccessToken, cookieOptions)
         .cookie("refreshToken", newRefreshTokenFull, cookieOptions)
         .json(new ApiResponse(200, { accessToken: newAccessToken }, "Token refreshed"));
