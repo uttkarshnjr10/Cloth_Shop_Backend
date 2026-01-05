@@ -19,31 +19,42 @@ const app = express();
 app.use(helmet());
 
 // 
+// --- CORS Configuration ---
 const allowedOrigins = [
-  "http://localhost:5173",                     // Local Development
-  "http://localhost:8080",                     // Local Preview
-  "https://anupriya-fashion-hub.vercel.app",   // Production Frontend (Vercel)
-  process.env.CORS_ORIGIN                      // Fallback from .env
-].filter(Boolean); // Removes undefined/null values
+  "http://localhost:5173",
+  "https://anupriya-fashion-hub.vercel.app",
+  process.env.CORS_ORIGIN,
+].filter(Boolean);
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps or curl requests)
+      // 1. Allow requests with no origin (Postman, curl, server-to-server)
       if (!origin) return callback(null, true);
-      
+
+      // 2. Allow explicitly whitelisted origins
       if (allowedOrigins.includes(origin)) {
         return callback(null, true);
-      } else {
-        console.log("Blocked by CORS:", origin); // Debugging log
-        return callback(new Error("Not allowed by CORS"));
       }
+
+      // 3. Allow ONLY your Vercel preview deployments (safe wildcard)
+      if (
+        origin.endsWith(".vercel.app") &&
+        origin.includes("anupriya-fashion-hub")
+      ) {
+        return callback(null, true);
+      }
+
+      console.warn("Blocked by CORS:", origin);
+      return callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+// --------------------------
+
 // --------------------------------
 
 // Middleware
