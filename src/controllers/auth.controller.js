@@ -6,7 +6,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { generateRefreshToken } from "../services/auth.service.js";
 import argon2 from "argon2";
 
-// --- DYNAMIC COOKIE OPTIONS (THE FIX) ---
+// --- DYNAMIC COOKIE OPTIONS  ---
 const getCookieOptions = () => {
     // Check if we are in production (e.g. on Vercel/Render)
     const isProduction = process.env.NODE_ENV === "production";
