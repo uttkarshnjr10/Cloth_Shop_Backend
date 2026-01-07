@@ -58,13 +58,14 @@ const login = asyncHandler(async (req, res) => {
         .json(
             new ApiResponse(200, { 
                 user: { _id: user._id, name: user.name, role: user.role, email: user.email },
-                accessToken 
+                accessToken,
+                refreshToken
             }, "Login successful")
         );
 });
 
 const refreshAccessToken = asyncHandler(async (req, res) => {
-    const incomingRefreshToken = req.cookies.refreshToken;
+    const incomingRefreshToken = req.cookies.refreshToken || req.headers.authorization?.split(" ")[1];
 
     if (!incomingRefreshToken) {
         throw new ApiError(401, "Unauthorized request");
