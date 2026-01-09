@@ -12,6 +12,7 @@ import imageRouter from "./routes/image.routes.js";
 import productRouter from "./routes/product.routes.js";
 import transactionRouter from "./routes/transaction.routes.js";
 import dashboardRouter from "./routes/dashboard.routes.js";
+import duesRoutes from "./routes/dues.routes.js";
 
 const app = express();
 
@@ -67,6 +68,7 @@ app.use("/api/v1/images", imageRouter);
 app.use("/api/v1/products", productRouter);
 app.use("/api/v1/transactions", transactionRouter);
 app.use("/api/v1/dashboard", dashboardRouter);
+app.use("/api/v1/dues", duesRoutes);
 
 app.use((err, req, res, next) => {
   const statusCode = err.statusCode || 500;

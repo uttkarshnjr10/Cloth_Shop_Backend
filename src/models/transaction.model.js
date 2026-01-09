@@ -29,10 +29,35 @@ const transactionSchema = new mongoose.Schema({
         subCategory: String,
         url: String
     },
-    description: String // For Expenses
+    description: String,
+    
+    // Reference to payment type records
+    paymentTypes: [
+        {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "PaymentType"
+        }
+    ],
+    
+    // Track payment breakdown
+    paymentBreakdown: {
+        cash: {
+            type: Number,
+            default: 0
+        },
+        online: {
+            type: Number,
+            default: 0
+        },
+        dues: {
+            type: Number,
+            default: 0
+        }
+    }
 }, { timestamps: true });
 
 // Index for fast Date Range Filtering (Weekly/Monthly Charts)
 transactionSchema.index({ createdAt: 1 });
+transactionSchema.index({ staffId: 1, createdAt: 1 });
 
 export const Transaction = mongoose.model("Transaction", transactionSchema);
