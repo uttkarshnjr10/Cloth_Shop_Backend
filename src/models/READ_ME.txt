@@ -37,6 +37,23 @@ KEY CONCEPTS:
   The snapshot preserves the history.
 - INDEX: Indexed on 'createdAt' to make Weekly/Monthly charts fast.
 
+New Updates - 
+✅ amountPaid
+Single source of truth for money received
+Updated whenever staff collects payment
+
+✅ dueAmount
+What the customer actually owes
+This is what you show in the Dues UI
+
+✅ paymentStatus
+Simple, binary, human-readable
+Enables clean filtering
+
+✅ customer & dueDate on Transaction
+Due belongs to the sale, not a payment record
+Matches real-world logic
+
 -----------------------------------------------------------------------------
 4. refreshToken.model.js
 -----------------------------------------------------------------------------

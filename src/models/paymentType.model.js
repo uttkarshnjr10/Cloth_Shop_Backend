@@ -1,50 +1,42 @@
 import mongoose from "mongoose";
 
-const paymentTypeSchema = new mongoose.Schema({
+const paymentTypeSchema = new mongoose.Schema(
+  {
+    // Parent transaction (source of truth)
     transaction: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Transaction",
-        required: true
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Transaction",
+      required: true,
+      index: true
     },
-    product: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Product"
-    },
-    type: {
-        type: String,
-        enum: ["CASH", "ONLINE", "DUES"],
-        required: true
-    },
-    amount: {
-        type: Number,
-        required: true
-    },
-    // For DUES type only
-    duesDetails: {
-        name: {
-            type: String,
-            required: function() { return this.type === "DUES"; }
-        },
-        phoneNumber: {
-            type: String,
-            required: function() { return this.type === "DUES"; },
-            match: [/^\d{10}$/, "Phone number must be 10 digits"]
-        },
-        dueDate: {
-            type: Date
-        }
-    },
-    // Payment status for DUES
-    status: {
-        type: String,
-        enum: ["PENDING", "PAID", "PARTIAL"],
-        default: "PENDING"
-    }
-}, { timestamps: true });
 
-// Index for fast queries
-paymentTypeSchema.index({ transaction: 1 });
-paymentTypeSchema.index({ type: 1 });
+    // Optional product reference (useful for reports)
+    product: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Product"
+    },
+
+    // HOW the money was received
+    type: {
+      type: String,
+      enum: ["CASH", "ONLINE"],
+      required: true,
+      index: true
+    },
+
+    // HOW MUCH money was received
+    amount: {
+      type: Number,
+      required: true,
+      min: 0
+    }
+  },
+  {
+    timestamps: true
+  }
+);
+
+// Useful indexes
 paymentTypeSchema.index({ createdAt: 1 });
 
 export const PaymentType = mongoose.model("PaymentType", paymentTypeSchema);

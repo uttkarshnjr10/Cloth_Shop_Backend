@@ -5,114 +5,102 @@ import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
-// 1. Record a Sale (Staff/Owner) - UPDATED with Multiple Payment Types
+// 1. Record a Sale - SIMPLIFIED 
 const recordSale = asyncHandler(async (req, res) => {
-    const { productId, salePrice, paymentMethods } = req.body;
+  const {
+    productId,
+    salePrice,
+    paymentStatus,     // "PAID" | "DUE"
+    amountPaid = 0,
+    paymentMode,       // "CASH" | "ONLINE" (only if amountPaid > 0)
+    customer,
+    dueDate
+  } = req.body;
 
-    // Validation
-    const product = await Product.findById(productId);
-    if (!product) {
-        throw new ApiError(404, "Product not found");
-    }       
+  // 1. Validate product
+  const product = await Product.findById(productId);
+  if (!product) throw new ApiError(404, "Product not found");
 
-    if (product.stockStatus === "OUT_OF_STOCK") {
-        throw new ApiError(400, "Product is already sold");
+  if (product.stockStatus === "OUT_OF_STOCK") {
+    throw new ApiError(400, "Product is already sold");
+  }
+
+  const totalAmount = Number(salePrice);
+  const paidAmount = Number(amountPaid);
+
+  if (paidAmount < 0 || paidAmount > totalAmount) {
+    throw new ApiError(400, "Invalid paid amount");
+  }
+
+  // 2. Calculate dues (BACKEND responsibility)
+  const dueAmount = totalAmount - paidAmount;
+
+  // 3. Validate DUE-specific fields
+  if (dueAmount > 0) {
+    if (!customer?.name || !customer?.phoneNumber) {
+      throw new ApiError(400, "Customer name and phone are required for dues");
     }
 
-    // Initialize payment breakdown
-    let paymentBreakdown = { cash: 0, online: 0, dues: 0 };
-    let paymentTypeRecords = [];
-    let totalPaymentAmount = 0;
+    if (!/^\d{10}$/.test(customer.phoneNumber)) {
+      throw new ApiError(400, "Phone number must be 10 digits");
+    }
+  }
 
-    // A. Handle Payment Methods (NEW FEATURE)
-    if (paymentMethods && Array.isArray(paymentMethods) && paymentMethods.length > 0) {
-        // Validate payment methods
-        for (const payment of paymentMethods) {
-            if (!payment.type || !payment.amount) {
-                throw new ApiError(400, "Each payment method must have type and amount");
-            }
+  // 4. Create Transaction
+  const transaction = await Transaction.create({
+    type: "SALE",
+    amount: totalAmount,
+    amountPaid: paidAmount,
+    dueAmount,
+    paymentStatus: dueAmount === 0 ? "PAID" : "DUE",
+    staffId: req.user._id,
+    productId: product._id,
+    productSnapshot: {
+      name: product.name,
+      category: product.category,
+      subCategory: product.subCategory,
+      url: product.images[0]?.url || ""
+    },
+    customer: dueAmount > 0 ? customer : undefined,
+    dueDate: dueAmount > 0 ? dueDate : undefined
+  });
 
-            if (!["CASH", "ONLINE", "DUES"].includes(payment.type)) {
-                throw new ApiError(400, "Invalid payment type");
-            }
+  // 5. Create Payment record ONLY if money received
+  let paymentTypeRecord = null;
 
-            // Validate DUES specific fields
-            if (payment.type === "DUES") {
-                if (!payment.duesDetails?.name || !payment.duesDetails?.phoneNumber) {
-                    throw new ApiError(400, "DUES type requires name and phoneNumber");
-                }
-
-                if (!/^\d{10}$/.test(payment.duesDetails.phoneNumber)) {
-                    throw new ApiError(400, "Phone number must be 10 digits");
-                }
-            }
-
-            totalPaymentAmount += payment.amount;
-            paymentBreakdown[payment.type.toLowerCase()] += payment.amount;
-        }
-
-        // Verify total payment matches sale price
-        if (Math.abs(totalPaymentAmount - Number(salePrice)) > 0.01) {
-            throw new ApiError(400, "Sum of payment methods must equal sale price");
-        }
-    } else {
-        // BACKWARD COMPATIBILITY: If no paymentMethods provided, treat entire amount as CASH
-        totalPaymentAmount = Number(salePrice);
-        paymentBreakdown.cash = Number(salePrice);
-        paymentMethods = [{
-            type: "CASH",
-            amount: Number(salePrice)
-        }];
+  if (paidAmount > 0) {
+    if (!["CASH", "ONLINE"].includes(paymentMode)) {
+      throw new ApiError(400, "Invalid payment mode");
     }
 
-    // B. Create the Transaction Record
-    const transaction = await Transaction.create({
-        type: "SALE",
-        amount: Number(salePrice),
-        staffId: req.user._id,
-        productId: product._id,
-        productSnapshot: {
-            name: product.name,
-            category: product.category,
-            subCategory: product.subCategory,
-            url: product.images[0]?.url || ""
-        },
-        paymentBreakdown
+    paymentTypeRecord = await PaymentType.create({
+      transaction: transaction._id,
+      product: product._id,
+      type: paymentMode,
+      amount: paidAmount,
+      status: "PAID"
     });
 
-    // C. Create Payment Type Records (NEW)
-    paymentTypeRecords = await Promise.all(
-        paymentMethods.map(payment =>
-            PaymentType.create({
-                transaction: transaction._id,
-                product: product._id,
-                type: payment.type,
-                amount: payment.amount,
-                duesDetails: payment.type === "DUES" ? payment.duesDetails : null,
-                status: payment.type === "DUES" ? "PENDING" : "PAID"
-            })
-        )
-    );
-
-    // D. Update Transaction with Payment Type References
-    transaction.paymentTypes = paymentTypeRecords.map(pt => pt._id);
+    transaction.paymentTypes.push(paymentTypeRecord._id);
     await transaction.save();
+  }
 
-    // E. Update Product Inventory
-    product.stockStatus = "OUT_OF_STOCK";
-    product.isOnline = false;
-    await product.save();
+  // 6. Update product inventory
+  product.stockStatus = "OUT_OF_STOCK";
+  product.isOnline = false;
+  await product.save();
 
-    // F. Populate and Return Response
-    await transaction.populate([
-        { path: "staffId", select: "name staffId" },
-        { path: "paymentTypes" }
-    ]);
+  // 7. Populate response
+  await transaction.populate([
+    { path: "staffId", select: "name staffId" },
+    { path: "paymentTypes" }
+  ]);
 
-    return res.status(201).json(
-        new ApiResponse(201, transaction, "Sale recorded successfully")
-    );
+  return res.status(201).json(
+    new ApiResponse(201, transaction, "Sale recorded successfully")
+  );
 });
+
 
 // 2. Record an Expense (Staff/Owner) - e.g., Tea, Cleaning
 const recordExpense = asyncHandler(async (req, res) => {
@@ -185,28 +173,5 @@ const getTransactionHistory = asyncHandler(async (req, res) => {
     );
 });
 
-// 4. NEW: Update Dues Status
-const updateDuesStatus = asyncHandler(async (req, res) => {
-    const { paymentTypeId } = req.params;
-    const { status } = req.body;
 
-    if (!["PENDING", "PAID", "PARTIAL"].includes(status)) {
-        throw new ApiError(400, "Invalid status");
-    }
-
-    const paymentType = await PaymentType.findByIdAndUpdate(
-        paymentTypeId,
-        { status },
-        { new: true }
-    );
-
-    if (!paymentType) {
-        throw new ApiError(404, "Payment record not found");
-    }
-
-    return res
-        .status(200)
-        .json(new ApiResponse(200, paymentType, "Payment status updated successfully"));
-});
-
-export { recordSale, recordExpense, getTransactionHistory, updateDuesStatus };
+export { recordSale, recordExpense, getTransactionHistory };
