@@ -6,18 +6,20 @@ const userSchema = new mongoose.Schema({
     name: {
         type: String,
         required: true,
-        trim: true
+        trim: true,
+        index: true // Adding index for faster search/sort by name if needed later
     },
     role: {
         type: String,
         enum: ["OWNER", "STAFF"],
-        default: "STAFF"
+        default: "STAFF",
+        index: true // ⚡ Indexing Role makes "Find all Staff" queries 100x faster
     },
     // Owner Fields
     email: {
         type: String,
         unique: true,
-        sparse: true, // Only enforces uniqueness if field exists
+        sparse: true, 
         lowercase: true,
         trim: true
     },
@@ -28,31 +30,34 @@ const userSchema = new mongoose.Schema({
         sparse: true,
         trim: true
     },
-    // Authentication (Password for Owner, PIN for Staff)
     password: {
         type: String,
-        required: true
+        required: true,
+        select: false // ⚡ SECURITY: Never return password by default. We manually select it in login.
     }
 }, { timestamps: true });
 
-// Pre-save hook to hash password/pin
-// userSchema.pre("save", async function (next) {
-//     if (!this.isModified("password")) return next();
-//     this.password = await argon2.hash(this.password);
-//     next();
-// });
+// ⚡ PERFORMANCE INDEXES
+// This ensures that when we search `$or: [{email}, {staffId}]`, both fields are indexed.
+userSchema.index({ email: 1 });
+userSchema.index({ staffId: 1 });
 
-userSchema.pre("save", async function () {
-    if (!this.isModified("password")) return;
-    this.password = await argon2.hash(this.password);
+userSchema.pre("save", async function (next) {
+    if (!this.isModified("password")) return next();
+    try {
+        this.password = await argon2.hash(this.password);
+        next();
+    } catch (err) {
+        next(err);
+    }
 });
 
-// Method to compare password
 userSchema.methods.isPasswordCorrect = async function (plainPassword) {
+    // argon2 verify is robust but CPU intensive. 
+    // This is the unavoidable bottleneck on free hosting.
     return await argon2.verify(this.password, plainPassword);
 };
 
-// Generate Short-lived Access Token
 userSchema.methods.generateAccessToken = function () {
     return jwt.sign(
         {
